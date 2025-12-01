@@ -1,6 +1,6 @@
 # ShopOrbit - Microservices E-commerce Platform
 
-ShopOrbit is a scalable E-commerce backend system built with **.NET 9 Microservices Architecture**. This project demonstrates advanced concepts such as Authentication/Authorization, Distributed Caching, Event-Driven Architecture, and API Gateway implementation.
+ShopOrbit is a scalable E-commerce backend system built with **.NET 8 Microservices Architecture**. This project demonstrates advanced concepts such as Authentication/Authorization, Distributed Caching, Event-Driven Architecture, and API Gateway implementation.
 
 ## 🚀 Tech Stack
 
@@ -71,3 +71,4 @@ dotnet ef database update --project src/Services/Ordering/ShopOrbit.Ordering.API
 ```bash
 ./start-all.ps1
 ```
+
