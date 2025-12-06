@@ -4,8 +4,10 @@ using System.Text.Json;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore; // Nhớ thêm dòng này để query DB
 using ShopOrbit.Catalog.API.Data;
 using ShopOrbit.Catalog.API.Models;
+using ShopOrbit.Catalog.API.DTOs;
 
 namespace ShopOrbit.Catalog.API.Controllers;
 
@@ -22,61 +24,167 @@ public class ProductsController : ControllerBase
         _context = context;
     }
 
+    // ==========================================
+    // GET ALL (Pagination, Filter, Cache)
+    // ==========================================
     [HttpGet]
     [Authorize(Roles = "Admin,Staff,User")]
-    public async Task<IActionResult> GetProducts()
+    public async Task<IActionResult> GetProducts([FromQuery] ProductSpecParams spec)
     {
-        string cacheKey = "catalog:products:all";
-        
-        // Check Redis Cache
+        string cacheKey = GenerateCacheKeyFromParams(spec);
+
+        // A. Check Redis Cache
         var cachedData = await _cache.GetStringAsync(cacheKey);
         if (!string.IsNullOrEmpty(cachedData))
         {
             if (CheckETag(cachedData)) return StatusCode(304);
-
-            return Ok(JsonSerializer.Deserialize<List<ProductDto>>(cachedData));
+            return Ok(JsonSerializer.Deserialize<PagedResult<ProductDto>>(cachedData));
         }
 
-        var products = new List<ProductDto> 
-        { 
-            new(Guid.NewGuid(), "IPhone 15", 999), 
-            new(Guid.NewGuid(), "Samsung S24", 888) 
+        // B. Query Database
+        var query = _context.Products.AsQueryable();
+
+        // -- Filtering --
+        if (!string.IsNullOrEmpty(spec.Search))
+            query = query.Where(p => p.Name.ToLower().Contains(spec.Search.ToLower()));
+        
+        if (spec.MinPrice.HasValue)
+            query = query.Where(p => p.Price >= spec.MinPrice);
+        
+        if (spec.MaxPrice.HasValue)
+            query = query.Where(p => p.Price <= spec.MaxPrice);
+
+        // -- Sorting --
+        query = spec.Sort switch
+        {
+            "priceAsc" => query.OrderBy(p => p.Price),
+            "priceDesc" => query.OrderByDescending(p => p.Price),
+            _ => query.OrderBy(p => p.Name) // Default
         };
 
+        // -- Pagination --
+        var totalCount = await query.CountAsync();
+        var items = await query
+            .Skip((spec.PageIndex - 1) * spec.PageSize)
+            .Take(spec.PageSize)
+            .Select(p => new ProductDto(p.Id, p.Name, p.Price)) // Map Entity -> DTO
+            .ToListAsync();
+
+        var result = new PagedResult<ProductDto>(items, totalCount, spec.PageIndex, spec.PageSize);
+
+        // Save to Redis
         var options = new DistributedCacheEntryOptions()
-            .SetAbsoluteExpiration(TimeSpan.FromMinutes(10))
-            .SetSlidingExpiration(TimeSpan.FromMinutes(2));
+            .SetAbsoluteExpiration(TimeSpan.FromMinutes(2)) 
+            .SetSlidingExpiration(TimeSpan.FromMinutes(1));
         
-        string jsonData = JsonSerializer.Serialize(products);
+        string jsonData = JsonSerializer.Serialize(result);
         await _cache.SetStringAsync(cacheKey, jsonData, options);
 
-        // Set HTTP Cache Headers
-        Response.Headers.Append("Cache-Control", "public, max-age=60"); // Client cache 60s
+        // D. HTTP Cache Headers
         SetETag(jsonData);
 
-        return Ok(products);
+        return Ok(result);
     }
 
+    // ==========================================
+    // GET BY ID (Detail)
+    // ==========================================
+    [HttpGet("{id}")]
+    [Authorize(Roles = "Admin,Staff,User")]
+    public async Task<IActionResult> GetProductById(Guid id)
+    {
+        string cacheKey = $"catalog:product:{id}";
+
+        var cachedData = await _cache.GetStringAsync(cacheKey);
+        if (!string.IsNullOrEmpty(cachedData))
+        {
+            return Ok(JsonSerializer.Deserialize<Product>(cachedData));
+        }
+
+        var product = await _context.Products.FindAsync(id);
+        if (product == null) return NotFound();
+
+        var options = new DistributedCacheEntryOptions().SetAbsoluteExpiration(TimeSpan.FromMinutes(10));
+        await _cache.SetStringAsync(cacheKey, JsonSerializer.Serialize(product), options);
+
+        return Ok(product);
+    }
+
+    // ==========================================
+    // CREATE (Admin Only)
+    // ==========================================
     [HttpPost]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> CreateProduct([FromBody] Product product)
     {
+        product.Id = Guid.NewGuid();
         _context.Products.Add(product);
         await _context.SaveChangesAsync();
         
-        await _cache.RemoveAsync("catalog:products:all");
+        return CreatedAtAction(nameof(GetProductById), new { id = product.Id }, product);
+    }
 
-        return Ok(new { Message = "Product created", Id = product.Id });
+    // ==========================================
+    // UPDATE (Admin Only)
+    // ==========================================
+    [HttpPut("{id}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> UpdateProduct(Guid id, [FromBody] Product productUpdate)
+    {
+        var product = await _context.Products.FindAsync(id);
+        if (product == null) return NotFound();
+
+        product.Name = productUpdate.Name;
+        product.Price = productUpdate.Price;
+        product.Description = productUpdate.Description;
+        product.StockQuantity = productUpdate.StockQuantity;
+        product.ImageUrl = productUpdate.ImageUrl;
+
+        await _context.SaveChangesAsync();
+
+        await _cache.RemoveAsync($"catalog:product:{id}");
+
+        return NoContent();
+    }
+
+    // ==========================================
+    // DELETE (Admin Only)
+    // ==========================================
+    [HttpDelete("{id}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> DeleteProduct(Guid id)
+    {
+        var product = await _context.Products.FindAsync(id);
+        if (product == null) return NotFound();
+
+        _context.Products.Remove(product);
+        await _context.SaveChangesAsync();
+
+        // Invalidation
+        await _cache.RemoveAsync($"catalog:product:{id}");
+
+        return NoContent();
+    }
+
+    // ==========================================
+    // HELPERS
+    // ==========================================
+    private string GenerateCacheKeyFromParams(ProductSpecParams spec)
+    {
+        return $"catalog:products:p{spec.PageIndex}_s{spec.PageSize}_q{spec.Search}_min{spec.MinPrice}_max{spec.MaxPrice}_sort{spec.Sort}";
     }
 
     private void SetETag(string content)
     {
         var etag = GenerateETag(content);
-        Response.Headers.Append("ETag", etag);
+        if (!Response.Headers.ContainsKey("ETag"))
+            Response.Headers.Append("ETag", etag);
     }
 
     private bool CheckETag(string content)
     {
+        if (!Request.Headers.ContainsKey("If-None-Match")) return false;
+        
         var requestETag = Request.Headers.IfNoneMatch.ToString();
         var currentETag = GenerateETag(content);
         return requestETag == currentETag;
