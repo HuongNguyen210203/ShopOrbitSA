@@ -1,49 +1,93 @@
-# Caching Strategy Plan
+# Caching Strategy Specification
 
-## 1. Redis Caching (Server-Side)
+## 1. Catalog Service (Read-Heavy)
 
-Áp dụng cho dữ liệu đọc nhiều, ít thay đổi (Read-heavy).
+> The Catalog Service is read-heavy. Caching is applied to reduce PostgreSQL load, improve API response times, and save network bandwidth.
 
-| Cache Key Pattern      | Data Content                   | TTL (Time To Live) | Invalidation Strategy              |
-| :--------------------- | :----------------------------- | :----------------- | :--------------------------------- |
-| `catalog:products:all` | List of all products (summary) | 10 minutes         | Xóa khi Admin thêm/sửa/xóa Product |
-| `catalog:product:{id}` | Product detail                 | 30 minutes         | Xóa khi update Product đó          |
+### 1.1 Redis Caching Strategy (Server-Side)
 
-## 2. HTTP Caching (Client-Side)
+**Cache Key Patterns**
 
-Sử dụng HTTP Headers để browser/proxy cache lại response.
+| Cache Key Pattern                               | Description                              |
+| :---------------------------------------------- | :--------------------------------------- |
+| `catalog:product:{id}`                          | Cache a single product detail            |
+| `catalog:products:p{page}_s{size}_filters...`   | Cache product list with paging & filters |
+| `catalog:category:{id}`                         | Cache a single category detail           |
+| `catalog:categories:p{page}_s{size}_filters...` | Cache category list with paging          |
 
-- **Cache-Control**: `public, max-age=60` (Cache 60s cho danh sách sản phẩm).
-- **ETag**: Server tính toán hash của data trả về.
-  - Nếu Client gửi `If-None-Match` trùng với hash hiện tại -> Trả về `304 Not Modified` (Không tốn băng thông body).
+**TTL (Time To Live)**
 
-## 3. Implemented Caching Flows (Update)
+| Data Type               | TTL        | Reason                                                                                    |
+| :---------------------- | :--------- | :---------------------------------------------------------------------------------------- |
+| Product/Category Detail | 30 minutes | Data changes infrequently.                                                                |
+| Product/Category List   | 2 minutes  | Lists are frequently affected by CRUD operations; short TTL ensures eventual consistency. |
 
-Dưới đây là các luồng Cache đã được triển khai thực tế trong code:
+**Invalidation Strategy**
 
-### A. Basket Service (Redis as Primary Store)
+| Operation                   | Invalidation Logic                                                                 |
+| :-------------------------- | :--------------------------------------------------------------------------------- |
+| **Create** Product/Category | List cache is **not** immediately removed. It expires naturally (TTL).             |
+| **Update** Product/Category | Remove specific detail cache (`catalog:product:{id}`). List cache updates via TTL. |
+| **Delete** Product/Category | Remove specific detail cache (`catalog:product:{id}`). List cache updates via TTL. |
 
-- **Mục đích:** Lưu trữ giỏ hàng tạm thời (Stateful).
-- **Key Pattern:** `{UserId}` (GUID Raw).
-  - _Lưu ý:_ Đã **loại bỏ** `InstanceName` prefix trong `Program.cs` để đảm bảo Ordering Service có thể đọc được key này.
-- **Data Structure:** JSON String (Serialized `ShoppingCart` object).
-- **TTL:** Persist (Không tự hết hạn, chờ User đặt hàng xong sẽ xóa).
-- **Logic:**
-  - Write: `BasketController` ghi đè toàn bộ JSON mới.
-  - Read: `BasketController` đọc JSON trả về Client.
+### 1.2 HTTP Caching (Client-Side)
 
-### B. Ordering Service (Redis Reader)
+Uses HTTP Headers to allow browsers/proxies to cache responses.
 
-- **Mục đích:** Lấy dữ liệu giỏ hàng để tạo đơn (Bảo mật giá).
-- **Logic:**
-  - Khi gọi `POST /api/orders`, Service lấy `UserId` từ Token -> Đọc Redis Key `{UserId}`.
-  - **Invalidation:** Sau khi `SaveChanges` thành công vào PostgreSQL -> Gọi lệnh `RemoveAsync(userId)` để xóa sạch giỏ hàng.
+- **Mechanism**: ETag (Entity Tag).
+  1. Server generates an MD5 hash of the response content.
+  2. Client stores the ETag.
+  3. Subsequent requests send `If-None-Match`.
+  4. If hash matches -> Server returns `304 Not Modified` (No body).
+- **Configuration**:
+  - `Cache-Control: public, max-age=60`
+  - `ETag: "<hash>"`
+- **Applied Endpoints**:
+  - `GET /products`
+  - `GET /products/{id}`
+  - `GET /categories`
 
-### C. Payment Service (Idempotency Key)
+---
 
-- **Mục đích:** Chống trùng lặp giao dịch (Idempotency).
-- **Key Pattern:** `processed_order_{OrderId}`
-- **TTL:** 24 giờ.
-- **Logic:**
-  - Trước khi xử lý: `Get(key)`. Nếu tồn tại -> Return.
-  - Sau khi xử lý: `Set(key, "processed")` để đánh dấu.
+## 2. Basket & Ordering Services (Transactional State)
+
+This flow uses Redis as the primary storage for the shopping cart state and coordinates between services.
+
+### 2.1 Basket Service (Redis as Primary Store)
+
+- **Purpose**: Temporary storage for the user's shopping cart (Stateful).
+- **Key Pattern**: `{UserId}` (Raw GUID).
+  - _> Note: The `InstanceName` prefix has been removed in `Program.cs` configuration to ensure the Ordering Service can access this key directly._
+- **Data Structure**: JSON String (Serialized `ShoppingCart` object).
+- **TTL**: Persist (Does not expire automatically; persists until the order is placed).
+- **Logic**:
+  - **Write**: `BasketController` overwrites the entire JSON value.
+  - **Read**: `BasketController` reads the JSON to return to the client.
+
+### 2.2 Ordering Service (Redis Reader)
+
+- **Purpose**: Retrieve basket data to create an order (ensures price security and data integrity).
+- **Logic**:
+  1. **Trigger**: `POST /api/orders`.
+  2. **Read**: Service extracts `UserId` from the Token -> Reads Redis Key `{UserId}`.
+  3. **Invalidation**: After successfully executing `SaveChanges` to PostgreSQL -> Calls `RemoveAsync(userId)` to clear the shopping cart.
+
+---
+
+## 3. Payment Service (Idempotency)
+
+- **Purpose**: Prevent transaction duplication (Idempotency handling).
+- **Key Pattern**: `processed_order_{OrderId}`
+- **TTL**: 24 hours.
+- **Logic**:
+  - **Before Processing**: Check `Get(key)`. If it exists -> Return immediately (skip processing).
+  - **After Processing**: Call `Set(key, "processed")` to mark the transaction as complete.
+
+---
+
+## 4. Summary of Benefits
+
+- **Reduced Database Load**: High-traffic read operations are intercepted by Redis.
+- **Bandwidth Efficiency**: `304 Not Modified` responses prevent sending redundant data.
+- **Data Consistency**: Strategy balances between immediate consistency (Basket) and eventual consistency (Catalog Lists).
+- **Reliability**: Idempotency keys in the Payment service prevent double-charging.
