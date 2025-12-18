@@ -6,15 +6,19 @@ using ShopOrbit.Payments.API.Models;
 
 namespace ShopOrbit.Payments.API.Consumers;
 
-public class OrderCreatedConsumer : IConsumer<OrderCreatedEvent>
+public class PaymentRequestedConsumer : IConsumer<PaymentRequestedEvent>
 {
     private readonly PaymentDbContext _dbContext;
     private readonly IPublishEndpoint _publishEndpoint;
-    private readonly ILogger<OrderCreatedConsumer> _logger;
+    private readonly ILogger<PaymentRequestedConsumer> _logger;
     private readonly IDistributedCache _cache;
     private static readonly Random _random = new();
 
-    public OrderCreatedConsumer(PaymentDbContext dbContext, IPublishEndpoint publishEndpoint, ILogger<OrderCreatedConsumer> logger, IDistributedCache cache)
+    public PaymentRequestedConsumer(
+        PaymentDbContext dbContext,
+        IPublishEndpoint publishEndpoint,
+        ILogger<PaymentRequestedConsumer> logger,
+        IDistributedCache cache)
     {
         _dbContext = dbContext;
         _publishEndpoint = publishEndpoint;
@@ -22,17 +26,23 @@ public class OrderCreatedConsumer : IConsumer<OrderCreatedEvent>
         _cache = cache;
     }
 
-    public async Task Consume(ConsumeContext<OrderCreatedEvent> context)
+    public async Task Consume(ConsumeContext<PaymentRequestedEvent> context)
     {
         var message = context.Message;
-        _logger.LogInformation($"[Payment Service] Received Order: {message.OrderId} - Amount: {message.TotalAmount}");
+
+        _logger.LogInformation(
+            "[Payment Service] Payment requested for Order {OrderId} - Amount: {Amount}",
+            message.OrderId,
+            message.Amount
+        );
 
         var key = $"processed_order_{message.OrderId}";
-        var exists = await _cache.GetStringAsync(key);
-
-        if (!string.IsNullOrEmpty(exists))
+        if (!string.IsNullOrEmpty(await _cache.GetStringAsync(key)))
         {
-            _logger.LogInformation($"Order {message.OrderId} has already been processed. Skipping duplicate.");
+            _logger.LogInformation(
+                "Order {OrderId} already processed. Skipping.",
+                message.OrderId
+            );
             return;
         }
 
@@ -42,8 +52,8 @@ public class OrderCreatedConsumer : IConsumer<OrderCreatedEvent>
         {
             OrderId = message.OrderId,
             UserId = message.UserId,
-            Amount = message.TotalAmount,
-            Currency = "VND",
+            Amount = message.Amount,
+            Currency = message.Currency,
             PaymentMethod = message.PaymentMethod,
             TransactionType = "Sale",
             Status = isSuccess ? "Success" : "Failed",
@@ -55,16 +65,21 @@ public class OrderCreatedConsumer : IConsumer<OrderCreatedEvent>
         _dbContext.Payments.Add(payment);
         await _dbContext.SaveChangesAsync();
 
-        await _cache.SetStringAsync(key, "processed", new DistributedCacheEntryOptions
-        {
-            AbsoluteExpirationRelativeToNow = TimeSpan.FromDays(1)
-        });
-        
-        _logger.LogInformation($"[Payment Service] Processed Payment: {payment.Id}");
+        await _cache.SetStringAsync(
+            key,
+            "processed",
+            new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromDays(1)
+            });
+
+        _logger.LogInformation(
+            "[Payment Service] Processed Payment {PaymentId}",
+            payment.Id
+        );
 
         if (isSuccess)
         {
-            _logger.LogInformation($"[Payment Service] Payment Success: {payment.Id}");
             await _publishEndpoint.Publish(new PaymentSucceededEvent
             {
                 OrderId = message.OrderId,
@@ -74,11 +89,10 @@ public class OrderCreatedConsumer : IConsumer<OrderCreatedEvent>
         }
         else
         {
-            _logger.LogWarning($"[Payment Service] Payment Failed: {payment.Id}");
             await _publishEndpoint.Publish(new PaymentFailedEvent
             {
                 OrderId = message.OrderId,
-                Reason = payment.FailureReason ?? "Payment processing failed."
+                Reason = payment.FailureReason!
             });
         }
     }

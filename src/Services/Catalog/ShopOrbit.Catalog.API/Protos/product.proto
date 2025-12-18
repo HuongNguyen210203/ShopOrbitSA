@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+option csharp_namespace = "ShopOrbit.Grpc";
+
+package product;
+
+service ProductGrpc {
+  rpc GetProduct (GetProductRequest) returns (ProductModel);
+}
+
+message GetProductRequest {
+  string product_id = 1;
+}
+
+message ProductModel {
+  string id = 1;
+  string name = 2;
+  double price = 3;
+  int32 stock_quantity = 4;
+  bool exists = 5;
+}

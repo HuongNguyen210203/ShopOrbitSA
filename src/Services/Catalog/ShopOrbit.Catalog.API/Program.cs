@@ -2,8 +2,8 @@ using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using ShopOrbit.Catalog.API.Consumers;
-using ShopOrbit.Catalog.API.Data; // Đảm bảo bạn đã tạo thư mục Data và DbContext
+using ShopOrbit.Catalog.API.Comsumers;
+using ShopOrbit.Catalog.API.Data;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -13,6 +13,7 @@ builder.Services.AddDbContext<CatalogDbContext>(options =>
 
 builder.Services.AddMassTransit(x =>
 {
+    x.AddConsumer<OrderCancelledConsumer>();
     x.AddConsumer<OrderCreatedConsumer>();
 
     x.UsingRabbitMq((context, cfg) =>
@@ -25,6 +26,11 @@ builder.Services.AddMassTransit(x =>
         {
             h.Username(rabbitUser);
             h.Password(rabbitPass);
+        });
+
+        cfg.ReceiveEndpoint("catalog-order-cancelled", e =>
+        {
+            e.ConfigureConsumer<OrderCancelledConsumer>(context);
         });
 
         cfg.ReceiveEndpoint("order-created-queue", e =>
@@ -61,10 +67,15 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddAuthorization();
 
 builder.Services.AddControllers();
+
+builder.Services.AddGrpc();
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
+
+app.MapGrpcService<ShopOrbit.Catalog.API.Services.ProductGrpcService>();
 
 using (var scope = app.Services.CreateScope())
 {

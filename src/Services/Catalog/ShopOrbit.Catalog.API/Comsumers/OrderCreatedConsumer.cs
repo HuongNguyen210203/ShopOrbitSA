@@ -3,7 +3,7 @@ using ShopOrbit.BuildingBlocks.Contracts;
 using ShopOrbit.Catalog.API.Data;
 using ShopOrbit.Catalog.API.Models;
 
-namespace ShopOrbit.Catalog.API.Consumers;
+namespace ShopOrbit.Catalog.API.Comsumers;
 
 public class OrderCreatedConsumer : IConsumer<OrderCreatedEvent>
 {
@@ -21,18 +21,22 @@ public class OrderCreatedConsumer : IConsumer<OrderCreatedEvent>
         var message = context.Message;
         _logger.LogInformation($"[RabbitMQ] Received Order Created: {message.OrderId} - Amount: {message.TotalAmount}");
 
-        // Logic giả lập: Trừ tồn kho (Ở đây mình hardcode trừ ID mẫu, thực tế bạn sẽ loop qua Items)
-        // Để đơn giản cho demo, mình chỉ log ra màn hình.
-        
-        // Nếu muốn code thật:
-        /*
-        var product = await _dbContext.Products.FirstOrDefaultAsync(p => p.Id == message.ProductId);
-        if(product != null) {
-            product.StockQuantity -= 1;
-            await _dbContext.SaveChangesAsync();
+        foreach (var item in message.OrderItems)
+        {
+            var product = await _dbContext.Products.FindAsync(item.ProductId);
+            if (product != null)
+            {
+                product.StockQuantity -= item.Quantity;
+                _logger.LogInformation($"[Updated stock for Product {product.Id}: New Stock = {product.StockQuantity}");
+
+                if (product.StockQuantity < 0)
+                {
+                    _logger.LogWarning($"[Stock Warning] Product {product.Id} is out of stock!");
+                }
+            }
         }
-        */
         
-        await Task.CompletedTask;
+        await _dbContext.SaveChangesAsync();
+        _logger.LogInformation($"Finished processing Order Created: {message.OrderId}");
     }
 }

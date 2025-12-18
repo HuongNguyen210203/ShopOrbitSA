@@ -2,10 +2,15 @@ using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using Quartz;
+using ShopOrbit.Grpc;
+using ShopOrbit.Ordering.API.Consumers;
 using ShopOrbit.Ordering.API.Data;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
+
+AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
 
 builder.Services.AddDbContext<OrderingDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
@@ -13,6 +18,14 @@ builder.Services.AddDbContext<OrderingDbContext>(options =>
 // MassTransit (RabbitMQ)
 builder.Services.AddMassTransit(x =>
 {
+    x.AddMessageScheduler(new Uri("queue:quartz"));
+    x.AddQuartzConsumers();
+    // x.AddPublishMessageScheduler();
+
+    x.AddConsumer<OrderTimeoutConsumer>();
+    x.AddConsumer<PaymentSucceededConsumer>();
+    x.AddConsumer<PaymentFailedConsumer>();
+    
     x.UsingRabbitMq((context, cfg) =>
     {
         var rabbitHost = builder.Configuration["RabbitMq:Host"] ?? "localhost";
@@ -25,8 +38,41 @@ builder.Services.AddMassTransit(x =>
             h.Password(rabbitPass);
         });
 
+        // cfg.UsePublishMessageScheduler(); 
+
+        cfg.UseMessageScheduler(new Uri("queue:quartz"));
+
+        cfg.ReceiveEndpoint("order-timeout", e =>
+        {
+            e.ConfigureConsumer<OrderTimeoutConsumer>(context);
+        });
+
+        cfg.ConfigureEndpoints(context);
+        
         cfg.UseMessageRetry(r => r.Interval(3, TimeSpan.FromSeconds(5)));
     });
+});
+
+builder.Services.AddQuartz(q =>
+{
+#pragma warning disable CS0618 // Type or member is obsolete
+    q.UseMicrosoftDependencyInjectionJobFactory();
+#pragma warning restore CS0618 // Type or member is obsolete
+    q.UsePersistentStore(s =>
+    {
+#pragma warning disable CS8604 // Possible null reference argument.
+        s.UsePostgres(builder.Configuration.GetConnectionString("DefaultConnection"));
+#pragma warning restore CS8604 // Possible null reference argument.
+#pragma warning disable CS0618 // Type or member is obsolete
+        s.UseJsonSerializer();
+#pragma warning restore CS0618 // Type or member is obsolete
+        s.UseClustering();
+    });
+});
+
+builder.Services.AddQuartzHostedService(q =>
+{
+    q.WaitForJobsToComplete = true;
 });
 
 builder.Services.AddStackExchangeRedisCache(options =>
@@ -55,6 +101,19 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddAuthorization();
 
 builder.Services.AddControllers();
+
+var catalogGrpcUrl = builder.Configuration["GrpcSettings:CatalogUrl"];
+
+if (string.IsNullOrEmpty(catalogGrpcUrl))
+{
+    catalogGrpcUrl = "http://localhost:5062"; 
+}
+
+builder.Services.AddGrpcClient<ProductGrpc.ProductGrpcClient>(options =>
+{
+    options.Address = new Uri(catalogGrpcUrl);
+});
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 

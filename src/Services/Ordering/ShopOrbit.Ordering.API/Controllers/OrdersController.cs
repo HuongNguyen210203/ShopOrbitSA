@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Distributed;
 using ShopOrbit.BuildingBlocks.Contracts;
+using ShopOrbit.Grpc;
+using ShopOrbit.Ordering.API.Consumers;
 using ShopOrbit.Ordering.API.Data;
 using ShopOrbit.Ordering.API.DTOs;
 using ShopOrbit.Ordering.API.Models;
@@ -20,39 +22,70 @@ public class OrdersController : ControllerBase
     private readonly IPublishEndpoint _publishEndpoint;
     private readonly ILogger<OrdersController> _logger;
     private readonly IDistributedCache _cache;
+    private readonly ProductGrpc.ProductGrpcClient _grpcClient;
+    private readonly IMessageScheduler _scheduler;
 
     public OrdersController(
         OrderingDbContext dbContext, 
         IPublishEndpoint publishEndpoint, 
         ILogger<OrdersController> logger,
-        IDistributedCache cache)
+        IDistributedCache cache,
+        ProductGrpc.ProductGrpcClient grpcClient,
+        IMessageScheduler scheduler)
     {
         _dbContext = dbContext;
         _publishEndpoint = publishEndpoint;
         _logger = logger;
         _cache = cache;
+        _grpcClient = grpcClient;
+        _scheduler = scheduler;
     }
 
     [HttpPost]
-    [Authorize(Roles = "User")]
+    [Authorize]
     public async Task<IActionResult> PlaceOrder([FromBody] CreateOrderRequest request)
     {
         var userIdString = User.FindFirstValue(ClaimTypes.NameIdentifier);
-
         if (string.IsNullOrEmpty(userIdString)) return Unauthorized();
 
         var basketString = await _cache.GetStringAsync(userIdString);
-        
         if (string.IsNullOrEmpty(basketString))
-        {
             return BadRequest("Basket is empty. Please add items to your basket before placing an order.");
-        }
 
-        var basket = JsonSerializer.Deserialize<BasketDto>(basketString);
-
-        if (basket == null)
+        var options = new JsonSerializerOptions
         {
-            return BadRequest("Invalid basket data.");
+            PropertyNameCaseInsensitive = true
+        };
+
+        var basket = JsonSerializer.Deserialize<BasketDto>(basketString, options);
+        if (basket == null || basket.Items.Count == 0) return BadRequest("Invalid basket data.");
+
+        var finalOrderItems = new List<OrderItem>();
+        var eventItems = new List<OrderItemEvent>();
+
+        foreach (var item in basket.Items)
+        {
+            var productInfo = await _grpcClient.GetProductAsync(new GetProductRequest { ProductId = item.ProductId });
+
+            if (!productInfo.Exists) 
+                return BadRequest($"Product with ID {item.ProductId} does not exist.");
+
+            if (productInfo.StockQuantity < item.Quantity)
+                return BadRequest($"Insufficient stock for product {productInfo.Name}. Available: {productInfo.StockQuantity}, Requested: {item.Quantity}");
+            
+            finalOrderItems.Add(new OrderItem
+            {
+                ProductId = Guid.Parse(item.ProductId),
+                ProductName = productInfo.Name,
+                Quantity = item.Quantity,
+                UnitPrice = (decimal)productInfo.Price
+            });
+
+            eventItems.Add(new OrderItemEvent
+            {
+                ProductId = Guid.Parse(item.ProductId),
+                Quantity = item.Quantity
+            });
         }
 
         var newOrder = new Order
@@ -60,16 +93,13 @@ public class OrdersController : ControllerBase
             UserId = Guid.Parse(userIdString),
             Status = "Pending",
             OrderDate = DateTime.UtcNow,
-            Items = basket.Items.Select(i => new OrderItem
-            {
-                ProductId = Guid.TryParse(i.ProductId, out var pid) ? pid : Guid.Empty, 
-                ProductName = i.ProductName,
-                Quantity = i.Quantity,
-                UnitPrice = i.Price
-            }).ToList()
-        };
+            Items = finalOrderItems,
+            TotalAmount = finalOrderItems.Sum(x => x.UnitPrice * x.Quantity),
 
-        newOrder.TotalAmount = newOrder.Items.Sum(x => x.UnitPrice * x.Quantity);
+            ShippingAddress = request.ShippingAddress,
+            PaymentMethod = request.PaymentMethod,
+            Notes = request.Notes
+        };
 
         _dbContext.Orders.Add(newOrder);
         await _dbContext.SaveChangesAsync();
@@ -81,9 +111,35 @@ public class OrdersController : ControllerBase
             OrderId = newOrder.Id,
             UserId = newOrder.UserId,
             TotalAmount = newOrder.TotalAmount,
-            CreatedAt = newOrder.OrderDate
+            CreatedAt = newOrder.OrderDate,
+            OrderItems = eventItems,
+            PaymentMethod = newOrder.PaymentMethod
         };
         await _publishEndpoint.Publish(eventMessage);
+
+        try 
+        {
+            var destinationUri = new Uri("queue:order-timeout"); 
+
+            var scheduled = await _scheduler.ScheduleSend(
+                destinationUri, 
+                DateTime.UtcNow.AddMinutes(5),
+                new OrderTimeoutEvent { OrderId = newOrder.Id }
+            );
+            
+            newOrder.TimeoutTokenId = scheduled.TokenId;
+            await _dbContext.SaveChangesAsync();
+
+            _logger.LogInformation(
+                "Scheduled timeout for Order {OrderId}, Token {TokenId}",
+                newOrder.Id,
+                scheduled.TokenId
+            );
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to schedule timeout message.");
+        }
 
         await _cache.RemoveAsync(userIdString);
 
@@ -91,6 +147,30 @@ public class OrdersController : ControllerBase
         { 
             Message = "Order placed successfully", 
             OrderId = newOrder.Id 
+        });
+    }
+
+    [HttpPost("{orderId}/pay")]
+    [Authorize]
+    public async Task<IActionResult> PayOrder(Guid orderId)
+    {
+        var order = await _dbContext.Orders.FindAsync(orderId);
+
+        if (order == null)
+            return NotFound();
+
+        if (order.Status != "Pending")
+            return BadRequest("Order is not payable.");
+
+        await _publishEndpoint.Publish(new PaymentRequestedEvent
+        {
+            OrderId = orderId
+        });
+
+        return Ok(new
+        {
+            Message = "Payment started",
+            OrderId = orderId
         });
     }
 
