@@ -117,3 +117,18 @@ docker-compose.override.yml
 # Entity Framework Core
 *.db
 *.log
+
+# dependencies
+ui/node_modules/
+
+# build output
+ui/.next/
+ui/out/
+
+# env files
+ui/.env
+ui/.env.local
+ui/.env.*
+
+# next debug
+ui/.vercel
