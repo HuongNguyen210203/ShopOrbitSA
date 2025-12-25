@@ -1,11 +1,14 @@
-// ui/next.config.ts
 import type { NextConfig } from "next";
 import path from "path";
 
 const nextConfig: NextConfig = {
-    turbopack: {
-        root: path.resolve(__dirname),
-    },
+  reactStrictMode: true,
+  images: {
+    domains: ["images.unsplash.com"],
+  },
+  turbopack: {
+    root: path.resolve(__dirname),
+  },
 };
 
 export default nextConfig;
