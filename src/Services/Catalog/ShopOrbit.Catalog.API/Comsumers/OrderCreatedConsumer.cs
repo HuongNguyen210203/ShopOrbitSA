@@ -38,6 +38,7 @@ public class OrderCreatedConsumer : IConsumer<OrderCreatedEvent>
             {
                 outOfStockItems.Add(item.ProductId);
             }
+            product.StockQuantity -= item.Quantity;
         }
 
         if (outOfStockItems.Count != 0)
@@ -58,7 +59,7 @@ public class OrderCreatedConsumer : IConsumer<OrderCreatedEvent>
         {
             var product = products.First(p => p.Id == item.ProductId);
             product.StockQuantity -= item.Quantity;
-            _logger.LogInformation($"Reserved {item.Quantity} of {product.Name}. New Stock: {product.StockQuantity}");
+            _logger.LogInformation($"[Catalog] Reserved {item.Quantity} of {product.Name}. Remaining: {product.StockQuantity}");
         }
 
         await _dbContext.SaveChangesAsync();
