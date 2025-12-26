@@ -22,7 +22,14 @@ public class BasketController : ControllerBase
 
     private string GetUserIdFromToken()
     {
-        return User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "anonymous";
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+        if (string.IsNullOrEmpty(userId))
+        {
+            throw new UnauthorizedAccessException("User ID not found in token.");
+        }
+
+        return userId;  
     }
 
     [HttpGet]

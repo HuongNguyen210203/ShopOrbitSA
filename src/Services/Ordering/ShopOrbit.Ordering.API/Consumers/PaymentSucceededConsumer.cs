@@ -32,27 +32,30 @@ public class PaymentSucceededConsumer : IConsumer<PaymentSucceededEvent>
             return;
         }
 
+        if (order.Status != "Pending")
+        {
+            _logger.LogError($"Order {message.OrderId} is in status {order.Status} but Payment Succeeded. Manual check required!");
+            return; 
+        }
+
         if (order.TimeoutTokenId.HasValue)
         {
-            await _scheduler.CancelScheduledSend(OrderTimeoutQueue, order.TimeoutTokenId.Value);
-
-            _logger.LogInformation(
-                "Cancelled timeout job for Order {OrderId}",
-                order.Id
-            );
-
+            try 
+            {
+                await _scheduler.CancelScheduledSend(OrderTimeoutQueue, order.TimeoutTokenId.Value);
+            }
+            catch(Exception ex)
+            {
+                _logger.LogWarning($"Failed to cancel scheduler: {ex.Message}");
+            }
             order.TimeoutTokenId = null;
         }
 
+        order.Status = "Paid";
+        order.PaymentId = message.PaymentId;
 
-        if (order.Status == "Pending") 
-        {
-            order.Status = "Paid";
-            order.PaymentId = message.PaymentId;
+        _logger.LogInformation($"Order {message.OrderId} status updated to Paid.");
 
-            _logger.LogInformation($"Order {message.OrderId} status updated to Paid.");
-
-            await _dbContext.SaveChangesAsync();
-        }
+        await _dbContext.SaveChangesAsync();
     }
 }

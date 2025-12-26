@@ -29,7 +29,7 @@ public class ProductsController : ControllerBase
 
     // GET ALL 
     [HttpGet]
-    [Authorize(Roles = "Admin,Staff,User")]
+    [AllowAnonymous]
     public async Task<IActionResult> GetProducts([FromQuery] ProductSpecParams spec)
     {
         string cacheKey = GenerateCacheKeyFromParams(spec);
@@ -97,7 +97,7 @@ public class ProductsController : ControllerBase
 
     // GET BY ID
     [HttpGet("{id}")]
-    [Authorize(Roles = "Admin,Staff,User")]
+    [AllowAnonymous]
     public async Task<IActionResult> GetProductById(Guid id)
     {
         string cacheKey = $"catalog:product:{id}";

@@ -29,21 +29,38 @@ public class OrderCreatedConsumer : IConsumer<OrderCreatedEvent>
             .ToListAsync();
 
         var outOfStockItems = new List<Guid>();
+        var reservedItems = new List<OrderItemEvent>();
 
         foreach (var item in message.OrderItems)
         {
-            var product = products.FirstOrDefault(p => p.Id == item.ProductId);
-            
-            if (product == null || product.StockQuantity < item.Quantity)
+            var rowsAffected = await _dbContext.Products
+                .Where(p => p.Id == item.ProductId && p.StockQuantity >= item.Quantity)
+                .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(p => p.StockQuantity, p => p.StockQuantity - item.Quantity));
+
+            if (rowsAffected > 0)
+            {
+                reservedItems.Add(item);
+                _logger.LogInformation($"Reserved {item.Quantity} of Product {item.ProductId}");
+            }
+            else
             {
                 outOfStockItems.Add(item.ProductId);
+                _logger.LogWarning($"Product {item.ProductId} failed to reserve (OOS).");
             }
-            product.StockQuantity -= item.Quantity;
         }
 
-        if (outOfStockItems.Count != 0)
+        if (outOfStockItems.Count > 0)
         {
-            _logger.LogWarning($"[Stock Failure] Order {message.OrderId} failed due to insufficient stock.");
+            _logger.LogWarning($"Order {message.OrderId} failed due to insufficient stock. Rolling back reserved items...");
+
+            foreach (var item in reservedItems)
+            {
+                await _dbContext.Products
+                    .Where(p => p.Id == item.ProductId)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(p => p.StockQuantity, p => p.StockQuantity + item.Quantity));
+            }
 
             await context.Publish(new StockReservationFailedEvent
             {
@@ -51,19 +68,10 @@ public class OrderCreatedConsumer : IConsumer<OrderCreatedEvent>
                 Reason = "Insufficient stock for items: " + string.Join(", ", outOfStockItems),
                 FailedItemIds = outOfStockItems
             });
-            
-            return; 
         }
-
-        foreach (var item in message.OrderItems)
+        else
         {
-            var product = products.First(p => p.Id == item.ProductId);
-            product.StockQuantity -= item.Quantity;
-            _logger.LogInformation($"[Catalog] Reserved {item.Quantity} of {product.Name}. Remaining: {product.StockQuantity}");
+             _logger.LogInformation($"All items reserved successfully for Order {message.OrderId}");
         }
-
-        await _dbContext.SaveChangesAsync();
-
-        _logger.LogInformation($"[Catalog] Stock reserved successfully for Order {message.OrderId}");
     }
 }

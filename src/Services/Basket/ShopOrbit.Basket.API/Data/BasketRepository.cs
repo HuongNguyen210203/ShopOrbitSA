@@ -32,10 +32,15 @@ public class BasketRepository : IBasketRepository
     public async Task<ShoppingCart?> UpdateBasketAsync(ShoppingCart basket)
     {
         var json = JsonSerializer.Serialize(basket);
-        
-        await _redisCache.SetStringAsync(basket.UserName, json);
 
-        return await GetBasketAsync(basket.UserName);
+        var options = new DistributedCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromDays(30)
+        };
+        
+        await _redisCache.SetStringAsync(basket.UserName, json, options);
+
+        return basket;
     }
 
     public async Task DeleteBasketAsync(string userName)

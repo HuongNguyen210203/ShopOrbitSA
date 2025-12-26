@@ -7,6 +7,18 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddReverseProxy()
     .LoadFromConfig(builder.Configuration.GetSection("ReverseProxy"));
 
+// CORS: Allow UI origin
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("FrontendCors", policy =>
+    {
+        policy.WithOrigins("http://localhost:3000")
+              .AllowAnyHeader()
+              .AllowAnyMethod();
+        // Uncomment if you use cookies: .AllowCredentials();
+    });
+});
+
 var jwtSettings = builder.Configuration.GetSection("JwtSettings");
 var secretKey = Encoding.UTF8.GetBytes(jwtSettings["Secret"]!);
 
@@ -29,6 +41,7 @@ builder.Services.AddAuthorizationBuilder()
     .AddPolicy("Authenticated", policy => policy.RequireAuthenticatedUser());
 
 var app = builder.Build();
+app.UseCors("FrontendCors");
 app.UseAuthentication();
 app.UseAuthorization();
 

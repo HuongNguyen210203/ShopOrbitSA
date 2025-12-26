@@ -29,7 +29,7 @@ public class CategoriesController : ControllerBase
 
     // GET ALL
     [HttpGet]
-    [Authorize(Roles = "Admin,Staff,User")]
+    [AllowAnonymous]
     public async Task<IActionResult> GetCategories([FromQuery] CategorySpecParams spec)
     {
         string cacheKey = GenerateCacheKeyFromParams(spec);

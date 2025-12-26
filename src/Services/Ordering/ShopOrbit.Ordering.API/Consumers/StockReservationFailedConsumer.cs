@@ -32,13 +32,14 @@ public class StockReservationFailedConsumer : IConsumer<StockReservationFailedEv
                 try 
                 {
                     await _scheduler.CancelScheduledSend(OrderTimeoutQueue, order.TimeoutTokenId.Value);
-                    order.TimeoutTokenId = null;
                     _logger.LogInformation($"Cancelled timeout job for Order {order.Id} due to Stock Failure.");
                 }
                 catch(Exception ex)
                 {
                     _logger.LogWarning($"Failed to cancel timeout job: {ex.Message}");
                 }
+                
+                order.TimeoutTokenId = null;
             }
 
             order.Status = "Cancelled";

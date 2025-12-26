@@ -66,7 +66,7 @@ public class PaymentRequestedConsumer : IConsumer<PaymentRequestedEvent>
 
         if (isSuccess)
         {
-            await context.Publish(new PaymentSucceededEvent
+            await _publishEndpoint.Publish(new PaymentSucceededEvent
             {
                 OrderId = message.OrderId,
                 PaymentId = payment.Id,
@@ -75,15 +75,13 @@ public class PaymentRequestedConsumer : IConsumer<PaymentRequestedEvent>
         }
         else
         {
-            await context.Publish(new PaymentFailedEvent
+            await _publishEndpoint.Publish(new PaymentFailedEvent
             {
                 OrderId = message.OrderId,
                 Reason = payment.FailureReason!
             });
         }
 
-        _logger.LogInformation(">>> SLEEPING 15s... KILL RABBITMQ! <<<");
-        await Task.Delay(30000); // Simulate processing delay
         await _dbContext.SaveChangesAsync();
 
         await _cache.SetStringAsync(key, "processed", new DistributedCacheEntryOptions
@@ -95,5 +93,8 @@ public class PaymentRequestedConsumer : IConsumer<PaymentRequestedEvent>
             "[Payment Service] Processed Payment {PaymentId}",
             payment.Id
         );
+
+        // _logger.LogInformation(">>> SLEEPING 15s... KILL RABBITMQ! <<<");
+        // await Task.Delay(30000); // Simulate processing delay
     }
 }

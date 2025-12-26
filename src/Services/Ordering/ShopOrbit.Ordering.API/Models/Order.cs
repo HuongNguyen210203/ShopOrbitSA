@@ -15,8 +15,7 @@ public class Order
     public string Status { get; set; } = "Pending"; // Pending, Paid, Shipped...
 
     [Required] 
-    [MaxLength(500)]
-    public string ShippingAddress { get; set; } = string.Empty;
+    public Address ShippingAddress { get; set; } = default!;
 
     [Required]
     [MaxLength(50)]

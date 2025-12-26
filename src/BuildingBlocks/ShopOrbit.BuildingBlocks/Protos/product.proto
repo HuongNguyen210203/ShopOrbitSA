@@ -18,4 +18,5 @@ message ProductModel {
   double price = 3;
   int32 stock_quantity = 4;
   bool exists = 5;
+  map<string, string> specifications = 6;
 }

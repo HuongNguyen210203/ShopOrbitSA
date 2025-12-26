@@ -34,7 +34,7 @@ public class ProductGrpcService : ProductGrpc.ProductGrpcBase
             return new ProductModel { Exists = false };
         }
 
-        return new ProductModel
+        var model = new ProductModel
         {
             Id = product.Id.ToString(),
             Name = product.Name,
@@ -42,5 +42,15 @@ public class ProductGrpcService : ProductGrpc.ProductGrpcBase
             StockQuantity = product.StockQuantity,
             Exists = true
         };
+
+        if (product.Specifications != null)
+        {
+            foreach (var spec in product.Specifications)
+            {
+                model.Specifications.Add(spec.Key, spec.Value);
+            }
+        }
+
+        return model;
     }
 }

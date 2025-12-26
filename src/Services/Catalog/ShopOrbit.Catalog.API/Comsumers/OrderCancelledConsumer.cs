@@ -1,4 +1,5 @@
 using MassTransit;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
 using ShopOrbit.BuildingBlocks.Contracts;
 using ShopOrbit.Catalog.API.Data;
@@ -20,11 +21,16 @@ public class OrderCancelledConsumer : IConsumer<OrderCancelledEvent>
     public async Task Consume(ConsumeContext<OrderCancelledEvent> context)
     {
         _logger.LogInformation($"Restoring stock for Order {context.Message.OrderId}");
-        
 
+        var productIds = context.Message.OrderItems.Select(oi => oi.ProductId).ToList();
+
+        var products = await _dbContext.Products
+            .Where(p => productIds.Contains(p.Id))
+            .ToListAsync();
+        
         foreach (var item in context.Message.OrderItems)
         {
-            var product = await _dbContext.Products.FindAsync(item.ProductId);
+            var product = await _dbContext.Products.FirstOrDefaultAsync(p => p.Id == item.ProductId);
             if (product != null)
             {
                 product.StockQuantity += item.Quantity;

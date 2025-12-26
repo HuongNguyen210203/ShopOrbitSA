@@ -39,7 +39,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Protobuf Include="Protos\product.proto" GrpcServices="Client" />
+    <Protobuf Include="..\..\..\BuildingBlocks\ShopOrbit.BuildingBlocks\Protos\product.proto" GrpcServices="Client" Link="Protos\product.proto" />
   </ItemGroup>
 
 </Project>

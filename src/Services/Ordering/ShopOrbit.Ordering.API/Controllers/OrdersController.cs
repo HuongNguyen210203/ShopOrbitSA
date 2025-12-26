@@ -27,7 +27,6 @@ public class OrdersController : ControllerBase
     private readonly IDistributedCache _cache;
     private readonly ProductGrpc.ProductGrpcClient _grpcClient;
     private readonly IMessageScheduler _scheduler;
-    private readonly IDistributedLockFactory _lockFactory;
 
     public OrdersController(
         OrderingDbContext dbContext, 
@@ -35,8 +34,7 @@ public class OrdersController : ControllerBase
         ILogger<OrdersController> logger,
         IDistributedCache cache,
         ProductGrpc.ProductGrpcClient grpcClient,
-        IMessageScheduler scheduler,
-        IDistributedLockFactory lockFactory)
+        IMessageScheduler scheduler)
     {
         _dbContext = dbContext;
         _publishEndpoint = publishEndpoint;
@@ -44,7 +42,6 @@ public class OrdersController : ControllerBase
         _cache = cache;
         _grpcClient = grpcClient;
         _scheduler = scheduler;
-        _lockFactory = lockFactory;
     }
 
     [HttpPost]
@@ -71,44 +68,28 @@ public class OrdersController : ControllerBase
 
         foreach (var item in basket.Items)
         {
-            var resource = $"lock:product:{item.ProductId}";
-            var expiry = TimeSpan.FromSeconds(5);
-            var wait = TimeSpan.FromSeconds(2);
-            var retry = TimeSpan.FromMicroseconds(200);
+            var productInfo = await _grpcClient.GetProductAsync(new GetProductRequest { ProductId = item.ProductId });
 
-            using (var redLock = await _lockFactory.CreateLockAsync(resource, expiry, wait, retry))
+            if (!productInfo.Exists)
+                return BadRequest($"Product {item.ProductId} not found.");
+
+            if (productInfo.StockQuantity < item.Quantity)
+                return BadRequest($"Insufficient stock for {productInfo.Name}. Available: {productInfo.StockQuantity}");
+
+            finalOrderItems.Add(new OrderItem
             {
-                if (redLock.IsAcquired)
-                {
-                    var productInfo = await _grpcClient.GetProductAsync(new GetProductRequest { ProductId = item.ProductId });
+                ProductId = Guid.Parse(item.ProductId),
+                ProductName = productInfo.Name,
+                Quantity = item.Quantity,
+                UnitPrice = (decimal)productInfo.Price,
+                Specifications = item.SelectedSpecifications ?? new Dictionary<string, string>()
+            });
 
-                    if (!productInfo.Exists) 
-                        return BadRequest($"Product with ID {item.ProductId} does not exist.");
-
-                    if (productInfo.StockQuantity < item.Quantity)
-                        return BadRequest($"Insufficient stock for product {productInfo.Name}. Available: {productInfo.StockQuantity}, Requested: {item.Quantity}");
-                    
-                    finalOrderItems.Add(new OrderItem
-                    {
-                        ProductId = Guid.Parse(item.ProductId),
-                        ProductName = productInfo.Name,
-                        Quantity = item.Quantity,
-                        UnitPrice = (decimal)productInfo.Price
-                    });
-
-                    eventItems.Add(new OrderItemEvent
-                    {
-                        ProductId = Guid.Parse(item.ProductId),
-                        Quantity = item.Quantity
-                    });
-                    _logger.LogInformation($"Reserved {item.Quantity} of Product {productInfo.Name} for User {userIdString}");
-                }
-                else
-                {
-                    _logger.LogWarning($"Could not acquire lock for product {item.ProductId}");
-                    return StatusCode(409, $"System is busy processing product {item.ProductId}. Please try again.");
-                }
-            }
+            eventItems.Add(new OrderItemEvent
+            {
+                ProductId = Guid.Parse(item.ProductId),
+                Quantity = item.Quantity
+            });
         }
 
         var newOrder = new Order
@@ -118,8 +99,16 @@ public class OrdersController : ControllerBase
             OrderDate = DateTime.UtcNow,
             Items = finalOrderItems,
             TotalAmount = finalOrderItems.Sum(x => x.UnitPrice * x.Quantity),
-
-            ShippingAddress = request.ShippingAddress,
+            ShippingAddress = new Address
+            {
+                FirstName = request.ShippingAddress.FirstName,
+                LastName = request.ShippingAddress.LastName,
+                EmailAddress = request.ShippingAddress.EmailAddress,
+                AddressLine = request.ShippingAddress.AddressLine,
+                Country = request.ShippingAddress.Country,
+                State = request.ShippingAddress.State,
+                ZipCode = request.ShippingAddress.ZipCode
+            },
             PaymentMethod = request.PaymentMethod,
             Notes = request.Notes,
             TimeoutTokenId = null
@@ -128,7 +117,7 @@ public class OrdersController : ControllerBase
         _dbContext.Orders.Add(newOrder);
         _logger.LogInformation($"Order {newOrder.Id} created for User {newOrder.UserId}");
 
-        var eventMessage = new OrderCreatedEvent
+        await _publishEndpoint.Publish(new OrderCreatedEvent
         {
             OrderId = newOrder.Id,
             UserId = newOrder.UserId,
@@ -136,8 +125,7 @@ public class OrdersController : ControllerBase
             CreatedAt = newOrder.OrderDate,
             OrderItems = eventItems,
             PaymentMethod = newOrder.PaymentMethod
-        };
-        await _publishEndpoint.Publish(eventMessage);
+        });
 
         try 
         {
@@ -162,9 +150,8 @@ public class OrdersController : ControllerBase
             _logger.LogError(ex, "Failed to schedule timeout message.");
         }
 
-        await _cache.RemoveAsync(userIdString);
-
         await _dbContext.SaveChangesAsync();
+        await _cache.RemoveAsync(userIdString);
 
         return Ok(new 
         { 
