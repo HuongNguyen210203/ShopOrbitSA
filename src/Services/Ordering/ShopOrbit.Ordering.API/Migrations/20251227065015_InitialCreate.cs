@@ -86,8 +86,8 @@ namespace ShopOrbit.Ordering.API.Migrations
                     ProductId = table.Column<Guid>(type: "uuid", nullable: false),
                     ProductName = table.Column<string>(type: "text", nullable: false),
                     Quantity = table.Column<int>(type: "integer", nullable: false),
-                    UnitPrice = table.Column<decimal>(type: "numeric(18,2)", nullable: false),
                     ImageUrl = table.Column<string>(type: "text", nullable: true),
+                    UnitPrice = table.Column<decimal>(type: "numeric(18,2)", nullable: false),
                     Specifications = table.Column<Dictionary<string, string>>(type: "jsonb", nullable: false),
                     OrderId = table.Column<Guid>(type: "uuid", nullable: false)
                 },

@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LayoutDashboard, ShoppingBag, Layers, ShoppingCart, Settings, LogOut } from "lucide-react";
+import AdminGuard from "@/components/auth/AdminGuard";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -13,7 +14,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { name: "Đơn hàng", href: "/admin/orders", icon: ShoppingCart },
   ];
 
+  const handleLoggout = () => {
+    localStorage.removeItem("token");
+    window.location.href = "/login";
+  }
+
   return (
+    <AdminGuard>
     <div className="flex h-screen bg-gray-50 font-sans text-gray-900">
       {/* Sidebar */}
       <aside className="w-72 bg-white border-r border-gray-200 flex flex-col shadow-sm">
@@ -50,7 +57,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
         {/* Footer Sidebar */}
         <div className="p-4 border-t border-gray-100">
-          <button className="flex items-center gap-3 px-4 py-3 w-full rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 transition-colors">
+          <button className="flex items-center gap-3 px-4 py-3 w-full rounded-lg text-sm font-medium text-red-600 hover:bg-red-50 transition-colors" onClick={() => {handleLoggout()}} >
             <LogOut size={20} />
             Đăng xuất
           </button>
@@ -64,5 +71,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </div>
       </main>
     </div>
+    </AdminGuard>
   );
 }
