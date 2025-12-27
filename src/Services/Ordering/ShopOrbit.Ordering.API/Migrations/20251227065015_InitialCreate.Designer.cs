@@ -13,7 +13,7 @@ using ShopOrbit.Ordering.API.Data;
 namespace ShopOrbit.Ordering.API.Migrations
 {
     [DbContext(typeof(OrderingDbContext))]
-    [Migration("20251226205015_InitialCreate")]
+    [Migration("20251227065015_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />

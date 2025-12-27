@@ -102,9 +102,9 @@ public class AuthController : ControllerBase
         if (user == null) return BadRequest(new { Message = "Invalid user" });
 
         // IMPORTANT: token in URL is UrlEncoded in Register, so decode it here
-        var decodedToken = HttpUtility.UrlDecode(token);
+        // var decodedToken = HttpUtility.UrlDecode(token);
 
-        var result = await _userManager.ConfirmEmailAsync(user, decodedToken);
+        var result = await _userManager.ConfirmEmailAsync(user, token);
 
         if (!result.Succeeded)
         {
