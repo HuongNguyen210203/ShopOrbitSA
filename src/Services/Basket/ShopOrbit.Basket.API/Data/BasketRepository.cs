@@ -26,7 +26,12 @@ public class BasketRepository : IBasketRepository
         if (string.IsNullOrEmpty(basket))
             return null;
 
-        return JsonSerializer.Deserialize<ShoppingCart>(basket);
+        var options = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        };
+
+        return JsonSerializer.Deserialize<ShoppingCart>(basket, options);
     }
 
     public async Task<ShoppingCart?> UpdateBasketAsync(ShoppingCart basket)

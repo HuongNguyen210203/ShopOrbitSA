@@ -2,6 +2,7 @@ using Asp.Versioning;
 using MassTransit;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Distributed;
 using RedLockNet;
 using ShopOrbit.BuildingBlocks.Contracts;
@@ -82,6 +83,7 @@ public class OrdersController : ControllerBase
                 ProductName = productInfo.Name,
                 Quantity = item.Quantity,
                 UnitPrice = (decimal)productInfo.Price,
+                ImageUrl = !string.IsNullOrEmpty(productInfo.ImageUrl) ? productInfo.ImageUrl : item.ImageUrl,
                 Specifications = item.SelectedSpecifications ?? new Dictionary<string, string>()
             });
 
@@ -126,6 +128,21 @@ public class OrdersController : ControllerBase
             OrderItems = eventItems,
             PaymentMethod = newOrder.PaymentMethod
         });
+
+        if (request.PaymentMethod == "COD")
+        {
+            await _publishEndpoint.Publish(new PaymentRequestedEvent
+            {
+                OrderId = newOrder.Id,
+                UserId = newOrder.UserId,
+                Amount = newOrder.TotalAmount,
+                PaymentMethod = "COD",
+                Currency = "VND"
+            });
+    
+            // Log để debug
+            _logger.LogInformation($"Order {newOrder.Id} is COD. Payment requested automatically.");
+        }
 
         try 
         {
@@ -214,5 +231,22 @@ public class OrdersController : ControllerBase
             return Forbid();
 
         return Ok(order);
+    }
+
+    [HttpGet("my-orders")]
+    [Authorize]
+    public async Task<IActionResult> GetMyOrders()
+    {
+        var userIdString = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrEmpty(userIdString)) return Unauthorized();
+
+        var userId = Guid.Parse(userIdString);
+
+        var orders = await _dbContext.Orders
+            .Where(o => o.UserId == userId)
+            .OrderByDescending(o => o.OrderDate)
+            .ToListAsync();
+
+        return Ok(orders);
     }
 }

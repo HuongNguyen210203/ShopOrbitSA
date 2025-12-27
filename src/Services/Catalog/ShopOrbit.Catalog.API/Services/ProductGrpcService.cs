@@ -40,7 +40,8 @@ public class ProductGrpcService : ProductGrpc.ProductGrpcBase
             Name = product.Name,
             Price = (double)product.Price,
             StockQuantity = product.StockQuantity,
-            Exists = true
+            Exists = true,
+            ImageUrl = product.ImageUrl ?? ""
         };
 
         if (product.Specifications != null)

@@ -18,7 +18,6 @@ export default function ProductsPage() {
           </p>
         </div>
 
-        {/* Suspense là bắt buộc khi dùng useSearchParams trong Client Component của Next.js */}
         <Suspense fallback={<div>Loading products...</div>}>
           <ProductsGrid />
         </Suspense>

@@ -1,6 +1,6 @@
 import axiosClient from "@/lib/axios";
 import { PagedResult, Product, ProductParams, Category } from "@/types";
-import { env } from "process";
+import { env } from "@/env";
 
 export const getProducts = async (
   params: ProductParams
@@ -15,11 +15,17 @@ export const getCategories = async (): Promise<PagedResult<Category>> => {
 };
 // Hàm helper để lấy token từ localStorage (hoặc cookie tùy cách bạn lưu)
 const getAuthHeaders = () => {
-  const token = localStorage.getItem("token"); // Ví dụ lưu ở localStorage
-  return {
+  const token = localStorage.getItem("token");
+
+  const headers: any = {
     "Content-Type": "application/json",
-    Authorization: `Bearer ${token}`,
   };
+
+  if (token && token !== "null" && token !== "undefined") {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  return headers;
 };
 
 export const catalogApi = {
@@ -104,7 +110,9 @@ export const catalogApi = {
       `${env.gatewayUrl}/api/v1/categories?pageIndex=${pageIndex}&pageSize=${pageSize}`,
       {
         cache: "no-store",
-        headers: getAuthHeaders(),
+        headers: {
+          "Content-Type": "application/json",
+        },
       }
     );
 

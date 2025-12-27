@@ -7,4 +7,5 @@ public class BasketItemDto
     public decimal Price { get; set; }
     public int Quantity { get; set; }
     public Dictionary<string, string> SelectedSpecifications { get; set; } = new();
+    public string? ImageUrl { get; set; }
 }

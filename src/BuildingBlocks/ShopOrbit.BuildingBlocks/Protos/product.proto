@@ -19,4 +19,5 @@ message ProductModel {
   int32 stock_quantity = 4;
   bool exists = 5;
   map<string, string> specifications = 6;
+  string image_url = 7;
 }

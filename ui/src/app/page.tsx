@@ -3,15 +3,15 @@ import Header from "@/components/layout/Header";
 import ProductSection from "@/features/catalog/components/ProductSection";
 import Link from "next/link";
 import { Category } from "@/types";
+import Footer from "@/components/layout/Footer";
 
 // Hàm lấy danh mục (chạy trên Server)
 async function getCategories(): Promise<Category[]> {
-  const apiUrl =
-    process.env.NEXT_PUBLIC_API_GATEWAY_URL || "http://127.0.0.1:5000";
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:5000";
 
   try {
     const res = await fetch(`${apiUrl}/api/v1/categories?pageSize=20`, {
-      cache: "no-store", // Luôn lấy mới nhất
+      cache: "no-store",
     });
 
     if (!res.ok) {
@@ -88,9 +88,7 @@ export default async function Home() {
         </section>
       </main>
 
-      <footer className="border-t border-gray-200 bg-white py-12 text-center">
-        <p className="text-sm text-gray-500">© 2024 ShopOrbit.</p>
-      </footer>
+      <Footer />
     </div>
   );
 }

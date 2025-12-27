@@ -18,6 +18,7 @@ builder.Services.AddMassTransit(x =>
 {
     // x.AddConsumer<OrderCreatedConsumer>();
     x.AddConsumer<PaymentRequestedConsumer>();
+    x.AddConsumer<OrderCancelledConsumer>();
 
     x.AddEntityFrameworkOutbox<PaymentDbContext>(o =>
     {

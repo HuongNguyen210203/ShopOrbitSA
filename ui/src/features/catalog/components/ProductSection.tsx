@@ -27,7 +27,7 @@ export default function ProductSection({
     const fetchData = async () => {
       try {
         const { data } = await api.get<PagedResult<Product>>(
-          "/api/v1/Products",
+          "/api/v1/products",
           {
             params: {
               pageIndex: 1,

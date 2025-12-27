@@ -4,6 +4,7 @@ import type {
   RegisterPayload,
   LoginPayload,
   AuthResponse,
+  UserProfile,
 } from "../types/auth";
 
 export const authService = {
@@ -35,6 +36,12 @@ export const authService = {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
+    });
+  },
+
+  getProfile() {
+    return apiFetch<UserProfile>("/api/v1/auth/me", {
+      method: "GET",
     });
   },
 };

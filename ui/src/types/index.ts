@@ -1,6 +1,9 @@
+import { AddressDto } from "@/services/order.service";
+
 export interface Product {
   id: string;
   name: string;
+  description: string;
   price: number;
   categoryName: string;
   imageUrl?: string;
@@ -68,6 +71,9 @@ export interface Order {
   status: string; // Pending, Paid, Cancelled
   totalAmount: number;
   orderDate: string;
-  items: BasketItem[]; // Dùng lại struct này cho gọn
+  items: BasketItem[];
   paymentId?: string;
+  paymentMethod: string;
+  shippingAddress?: AddressDto;
+  notes?: string;
 }
